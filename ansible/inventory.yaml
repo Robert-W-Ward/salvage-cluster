@@ -1,0 +1,25 @@
+all:
+  children:
+    head_node:
+      hosts:
+        head:
+          ansible_host: 192.168.1.219
+          ansible_user: robert
+
+    cluster:
+      hosts:
+        salvage1:
+          ansible_host: 192.168.1.129
+          ansible_user: admin
+        salvage2:
+          ansible_host: 192.168.1.130
+          ansible_user: admin
+        salvage3:
+          ansible_host: 192.168.1.131
+          ansible_user: admin
+        salvage4:
+          ansible_host: 192.168.1.132
+          ansible_user: admin
+        salvage5:
+          ansible_host: 192.168.1.133
+          ansible_user: admin

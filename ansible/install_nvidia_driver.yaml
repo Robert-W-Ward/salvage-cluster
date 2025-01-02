@@ -1,0 +1,113 @@
+- name: Install Latest NVIDIA Driver on Rocky Linux 9.5
+  hosts: cluster
+  become: true
+  vars:
+    nvidia_driver_stream: "latest-dkms"
+
+  tasks:
+    ###########################################################################
+    # 1) OPTIONAL: Remove old packages (if any exist) -- ignoring errors
+    ###########################################################################
+    - name: Remove any old NVIDIA / CUDA packages (if any)
+      shell: |
+        dnf list installed | grep -E 'nvidia-|libnvidia-|cuda-' && \
+        dnf -y remove nvidia-* libnvidia-* cuda-*
+      ignore_errors: true
+      register: remove_packages_result
+      changed_when: "'Removing' in remove_packages_result.stdout or remove_packages_result.stderr"
+
+
+    ###########################################################################
+    # 2) Enable CRB (CodeReady Builder) on Rocky 9
+    ###########################################################################
+    - name: Enable CRB repository on Rocky 9
+      # CRB is required for certain dev libraries / dependencies
+      ansible.builtin.command: dnf config-manager --set-enabled crb
+      register: enable_crb
+      changed_when: "'enabled' in enable_crb.stdout or enable_crb.stderr"
+
+    ###########################################################################
+    # 3) Enable EPEL repository (for DKMS, libvdpau, etc.)
+    ###########################################################################
+    - name: Enable EPEL repository
+      dnf:
+        name: "https://dl.fedoraproject.org/pub/epel/epel-release-latest-9.noarch.rpm"
+        state: present
+
+    ###########################################################################
+    # 4) Add NVIDIA CUDA repository for RHEL9 / Rocky9
+    ###########################################################################
+    - name: Add NVIDIA CUDA repository
+      ansible.builtin.command: >
+        dnf config-manager --add-repo
+        https://developer.download.nvidia.com/compute/cuda/repos/rhel9/x86_64/cuda-rhel9.repo
+      args:
+        creates: /etc/yum.repos.d/cuda-rhel9.repo
+
+    ###########################################################################
+    # 5) Clean DNF metadata and update cache
+    ###########################################################################
+    - name: Clean all DNF metadata
+      ansible.builtin.command: dnf clean all
+
+    - name: Make fresh DNF cache
+      ansible.builtin.command: dnf makecache
+
+    ###########################################################################
+    # 6) Install development tools (kernel headers/devel, gcc, make)
+    #    Even if using precompiled modules, this step is typically harmless
+    ###########################################################################
+    - name: Install required development tools
+      dnf:
+        name:
+          - gcc
+          - make
+          - kernel-devel-{{ ansible_kernel }}
+          - kernel-headers-{{ ansible_kernel }}
+        state: present
+
+    ###########################################################################
+    # 7) Install DKMS (needed for 'latest-dkms' or if you want DKMS modules)
+    #    If you use a non-DKMS stream (like 'latest'), you can skip this
+    ###########################################################################
+    - name: Install DKMS
+      dnf:
+        name:
+          - dkms
+          - libvdpau  # sometimes needed by driver
+        state: present
+
+    ###########################################################################
+    # 8) Remove / reset any old NVIDIA module streams (avoid switching conflicts)
+    ###########################################################################
+    - name: Remove old nvidia-driver module (if exists)
+      shell: |
+        dnf -y module remove nvidia-driver || true
+        dnf -y module reset nvidia-driver || true
+      ignore_errors: true
+
+    ###########################################################################
+    # 9) Install latest NVIDIA Driver (DKMS)
+    ###########################################################################
+    - name: Install latest NVIDIA Driver (DKMS)
+      command: >
+        dnf -y module install nvidia-driver:{{ nvidia_driver_stream }}
+        --allowerasing
+        --nobest
+      register: driver_install
+      changed_when: true
+      failed_when: driver_install.rc != 0
+
+    - name: Print driver installation logs
+      debug:
+        var: driver_install
+
+    ###########################################################################
+    # 10) Reboot to load the new driver modules
+    ###########################################################################
+    - name: Reboot to load new driver
+      reboot:
+        msg: "Rebooting to load NVIDIA driver"
+        connect_timeout: 300
+        reboot_timeout: 600
+        test_command: "nvidia-smi"
