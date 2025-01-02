@@ -1,0 +1,58 @@
+---
+- name: Install CUDA 12.6 on Rocky / RHEL 9
+  hosts: cluster
+  become: true
+  vars:
+    cuda_version: 12.6
+  tasks:
+  - name: Update DNF
+    dnf:
+      name: "*"
+      state: latest
+
+  - name: Enable network CUDA repo
+    ansible.builtin.command: > 
+      dnf config-manager --add-repo 
+      https://developer.download.nvidia.com/compute/cuda/repos/rhel9/x86_64/cuda-rhel9.repo
+    args:
+      creates: /etc/yum.repos.d/cuda-rhel9.repo
+
+  - name: Install new CUDA public GPG key (NVIDIA key d42d0685)
+    rpm_key:
+      state: present
+      key: "https://developer.download.nvidia.com/compute/cuda/repos/fedora39/x86_64/D42D0685.pub"
+      validate_certs: no
+  
+  - name: Clean DNF repository
+    ansible.builtin.command: dnf clean all
+
+  - name: Install CUDA Toolkit 12.6
+    dnf:
+      name:
+        - cuda-toolkit-12-6
+      state: present
+      update_cache: yes
+        
+  - name: Install cudaNN
+    dnf:
+      name: 
+        - zlib
+        - cudnn9-cuda-12
+      state: present
+
+  - name: Add CUDA paths to environment variables
+    lineinfile:
+      path: /etc/profile.d/cuda.sh
+      line: "{{ item }}"
+      create: yes
+    with_items:
+      - "export PATH=/usr/local/cuda-12.6/bin:$PATH"
+      - "export LD_LIBRARY_PATH=/usr/local/cuda-12.6/lib64:$LD_LIBRARY_PATH"
+
+  - name: Set proper permissions for CUDA environment file
+    file:
+      path: /etc/profile.d/cuda.sh
+      mode: '0755'
+      owner: root
+      group: root
+

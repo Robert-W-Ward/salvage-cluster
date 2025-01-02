@@ -8,13 +8,13 @@
     ###########################################################################
     # 1) OPTIONAL: Remove old packages (if any exist) -- ignoring errors
     ###########################################################################
-    - name: Remove any old NVIDIA / CUDA packages (if any)
-      shell: |
-        dnf list installed | grep -E 'nvidia-|libnvidia-|cuda-' && \
-        dnf -y remove nvidia-* libnvidia-* cuda-*
-      ignore_errors: true
-      register: remove_packages_result
-      changed_when: "'Removing' in remove_packages_result.stdout or remove_packages_result.stderr"
+  - name: Remove any old NVIDIA / CUDA packages (if any)
+    shell: |
+      dnf list installed | grep -E 'nvidia-|libnvidia-|cuda-' && \
+      dnf -y remove nvidia-* libnvidia-* cuda-*
+    ignore_errors: true
+    register: remove_packages_result
+    changed_when: "'Removing' in remove_packages_result.stdout or remove_packages_result.stderr"
 
 
     ###########################################################################
