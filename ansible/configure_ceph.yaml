@@ -1,0 +1,20 @@
+---
+- name: Deploy Ceph Cluster
+  hosts: cluster
+  become: true
+  tasks:
+    - name: Search for the Centos9 stream package
+    command: dnf search release-ceph
+
+  - name: Install Ceph Squid
+    command: dnf install -y centos-release-ceph-squid
+
+  - name: Install cephadm
+    command: dnf install -y cephadm
+
+  - name: Install Python dependencies
+    dnf:
+      name:
+        - python3-jinja2
+        - python3-PyYAML
+      state: present
