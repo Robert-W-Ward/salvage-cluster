@@ -1,20 +1,122 @@
 ---
-- name: Deploy Ceph Cluster
+- name: Setup Cephadm User and Install cephadm on All Cluster Nodes
   hosts: cluster
-  become: true
+  become: yes
+  vars:
+    ceph_user: cephadm
+    ssh_private_key_src: "~/.ssh/cephadm_key"
+    ssh_public_key_src: "~/.ssh/cephadm_key.pub"
+    ssh_key_path: "/home/{{ ceph_user }}/.ssh/cephadm_key"
+    authorized_keys_path: "/home/{{ ceph_user }}/.ssh/authorized_keys"
+
   tasks:
-    - name: Search for the Centos9 stream package
-    command: dnf search release-ceph
+    - name: Ensure cephadm user exists
+      user:
+        name: "{{ ceph_user }}"
+        shell: /bin/bash
+        create_home: yes
+        state: present
 
-  - name: Install Ceph Squid
-    command: dnf install -y centos-release-ceph-squid
+    - name: Create .ssh directory for cephadm
+      file:
+        path: "/home/{{ ceph_user }}/.ssh"
+        state: directory
+        mode: '0700'
+        owner: "{{ ceph_user }}"
+        group: "{{ ceph_user }}"
 
-  - name: Install cephadm
-    command: dnf install -y cephadm
+    - name: Deploy SSH public key for cephadm
+      copy:
+        src: "{{ ssh_public_key_src }}"
+        dest: "{{ authorized_keys_path }}"
+        mode: '0600'
+        owner: "{{ ceph_user }}"
+        group: "{{ ceph_user }}"
 
-  - name: Install Python dependencies
-    dnf:
-      name:
-        - python3-jinja2
-        - python3-PyYAML
-      state: present
+    - name: Deploy SSH private key for cephadm on salvage1
+      when: inventory_hostname == 'salvage1'
+      copy:
+        src: "{{ ssh_private_key_src }}"
+        dest: "{{ ssh_key_path }}"
+        mode: '0600'
+        owner: "{{ ceph_user }}"
+        group: "{{ ceph_user }}"
+
+    - name: Ensure passwordless sudo for cephadm
+      copy:
+        dest: /etc/sudoers.d/cephadm
+        content: "{{ ceph_user }} ALL=(ALL) NOPASSWD:ALL\n"
+        mode: '0440'
+      notify: Restart SSH
+
+    - name: Disable PermitRootLogin in SSH configuration
+      lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: '^PermitRootLogin'
+        line: 'PermitRootLogin no'
+        state: present
+        backup: yes
+      notify: Restart SSH
+
+    - name: Install prerequisites (CentOS Stream)
+      dnf:
+        name:
+          - curl
+          - sudo
+          - gnupg2
+          - lsb-release
+          - epel-release
+        state: present
+        update_cache: yes
+      when: ansible_os_family == "RedHat"
+
+    - name: Install additional dependencies for cephadm
+      dnf:
+        name:
+          - python3-pip
+          - python3-requests
+        state: present
+      when: ansible_os_family == "RedHat"
+
+- name: Bootstrap the Ceph Cluster on salvage1
+  hosts: salvage1
+  become: yes
+  tasks:
+    - name: Bootstrap the Ceph cluster
+      command: "cephadm bootstrap --mon-ip {{ ansible_host }} --allow-overwrite --ssh-user cephadm"
+      register: bootstrap_result
+      ignore_errors: yes
+
+    - name: Fail if bootstrap failed
+      fail:
+        msg: "Cephadm bootstrap failed. Check the logs for more details."
+      when: bootstrap_result.rc != 0
+
+- name: Add Additional Hosts to the Ceph Cluster from salvage1
+  hosts: salvage1
+  become: yes
+  vars:
+    cluster_hosts:
+      - { name: 'salvage-2', ip: '192.168.1.130' }
+      - { name: 'salvage-3', ip: '192.168.1.131' }
+      - { name: 'salvage-4', ip: '192.168.1.132' }
+      - { name: 'salvage-5', ip: '192.168.1.133' }
+
+  tasks:
+    - name: Add hosts to the Ceph cluster
+      shell: "cephadm shell -- ceph orch host add {{ item.name }} {{ item.ip }}"
+      loop: "{{ cluster_hosts }}"
+      when: item.name != 'salvage1'
+      register: add_host_result
+      retries: 2
+      delay: 10
+      until: add_host_result is succeeded
+
+    - name: Verify host addition
+      shell: "cephadm shell -- ceph orch host ls | grep {{ item.name }}"
+      loop: "{{ cluster_hosts }}"
+      when: item.name != 'salvage1'
+      register: verify_host
+      retries: 2
+      delay: 10
+      until: verify_host.stdout.find(item.name) != -1
